@@ -1,0 +1,1 @@
+ERROR:app.document_parser:Failed to extract text from TXT temp_test.txt: [Errno 2] No such file or directory: 'temp_test.txt'
