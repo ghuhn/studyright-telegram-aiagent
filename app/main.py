@@ -413,30 +413,6 @@ async def handle_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     question = await generate_quiz_question(random_chunk)
     await send_long_message(update, f"**🧠 Pop Quiz!**\n\n{question}", parse_mode="Markdown")
 
-def main() -> None:
-    """Start the bot."""
-    if not settings.telegram_bot_token:
-        logger.error("No TELEGRAM_BOT_TOKEN provided in .env!")
-        return
-
-    # Create the Application and pass it your bot's token.
-    application = ApplicationBuilder().token(settings.telegram_bot_token).build()
-
-    # Create handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("commands", help_command))
-    application.add_handler(CommandHandler("subject", handle_subject))
-    application.add_handler(CommandHandler("flashcards", handle_flashcards))
-    application.add_handler(CommandHandler("quiz", handle_quiz))
-    application.add_handler(CommandHandler("ask", handle_ask))
-    application.add_handler(CommandHandler("clear", handle_clear))
-    application.add_handler(CommandHandler("fetch", handle_fetch))
-    application.add_handler(CommandHandler("notifications", handle_fetch))
-    application.add_handler(CommandHandler("notification_history", handle_notification_history))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-
     # Add background jobs
     job_queue = application.job_queue
     if job_queue:
@@ -447,49 +423,49 @@ def main() -> None:
         logger.info("Background jobs scheduled.")
     else:
         logger.warning("JobQueue is not initialized. Background tasks won't run. Make sure 'python-telegram-bot[job-queue]' is installed.")
+    
+    return telegram_app
 
-    # Determine if we are running in the cloud (Render) or locally
-    is_render = os.environ.get("RENDER", "") == "true"
+# We need a custom FastAPI app to serve the webhook because Render 
+# expects a proper external Web Server process to bind to the port.
+telegram_app = setup_application()
 
-    if is_render:
-        port = int(os.environ.get("PORT", "10000"))
-        render_hostname = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "")
-        webhook_url = f"https://{render_hostname}/{settings.telegram_bot_token}"
-        
-        # We need a custom FastAPI app to serve the webhook because Render 
-        # expects a proper external Web Server process to bind to the port.
-        @asynccontextmanager
-        async def lifespan(app: FastAPI):
-            # Set up webhook
-            await application.bot.set_webhook(url=webhook_url)
-            # Initialize and start tg application manually
-            await application.initialize()
-            await application.start()
-            yield
-            # Stop tg application manually
-            await application.stop()
-            await application.shutdown()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Only set up webhooks if we have an external URL provided by Render
+    render_hostname = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "")
+    webhook_url = f"https://{render_hostname}/{settings.telegram_bot_token}"
+    
+    if render_hostname:
+        logger.info(f"Setting webhook to {webhook_url}")
+        await telegram_app.bot.set_webhook(url=webhook_url)
+    
+    # Initialize and start tg application manually
+    await telegram_app.initialize()
+    await telegram_app.start()
+    yield
+    # Stop tg application manually
+    await telegram_app.stop()
+    await telegram_app.shutdown()
 
-        app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan)
 
-        @app.post(f"/{settings.telegram_bot_token}")
-        async def telegram_webhook(request: Request):
-            """Endpoint for Telegram to send updates to."""
-            update = Update.de_json(await request.json(), application.bot)
-            await application.process_update(update)
-            return Response(status_code=200)
+@app.post(f"/{settings.telegram_bot_token}")
+async def telegram_webhook(request: Request):
+    """Endpoint for Telegram to send updates to via Webhooks."""
+    update = Update.de_json(await request.json(), telegram_app.bot)
+    await telegram_app.process_update(update)
+    return Response(status_code=200)
 
-        @app.get("/")
-        async def health_check():
-            """Render checks for open ports. This proves the server is alive."""
-            return {"status": "ok"}
-
-        logger.info(f"Starting ASGI Webhook Server on port {port} targeting {webhook_url}...")
-        uvicorn.run(app, host="0.0.0.0", port=port)
-    else:
-        # Running locally: Use Polling
-        logger.info("Starting bot with Polling...")
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
+@app.get("/")
+async def health_check():
+    """Render checks for open ports. This proves the ASGI server is alive."""
+    return {"status": "ok", "message": "AI Study Agent Webhook Server is running."}
 
 if __name__ == "__main__":
-    main()
+    # Running locally: Use Polling instead of ASGI Webhooks
+    logger.info("Starting bot locally with Polling...")
+    if telegram_app:
+        telegram_app.run_polling(allowed_updates=Update.ALL_TYPES)
+    else:
+        logger.error("Failed to initialize Telegram application.")
