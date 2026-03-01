@@ -413,8 +413,32 @@ async def handle_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     question = await generate_quiz_question(random_chunk)
     await send_long_message(update, f"**🧠 Pop Quiz!**\n\n{question}", parse_mode="Markdown")
 
+def setup_application():
+    """Start the bot and register handlers."""
+    if not settings.telegram_bot_token:
+        logger.error("No TELEGRAM_BOT_TOKEN provided in .env!")
+        return None
+
+    # Create the Application and pass it your bot's token.
+    telegram_app = ApplicationBuilder().token(settings.telegram_bot_token).build()
+
+    # Create handlers
+    telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(CommandHandler("help", help_command))
+    telegram_app.add_handler(CommandHandler("commands", help_command))
+    telegram_app.add_handler(CommandHandler("subject", handle_subject))
+    telegram_app.add_handler(CommandHandler("flashcards", handle_flashcards))
+    telegram_app.add_handler(CommandHandler("quiz", handle_quiz))
+    telegram_app.add_handler(CommandHandler("ask", handle_ask))
+    telegram_app.add_handler(CommandHandler("clear", handle_clear))
+    telegram_app.add_handler(CommandHandler("fetch", handle_fetch))
+    telegram_app.add_handler(CommandHandler("notifications", handle_fetch))
+    telegram_app.add_handler(CommandHandler("notification_history", handle_notification_history))
+    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    telegram_app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+
     # Add background jobs
-    job_queue = application.job_queue
+    job_queue = telegram_app.job_queue
     if job_queue:
         # Check email every 15 minutes
         job_queue.run_repeating(check_email_job, interval=900, first=10)
