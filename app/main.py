@@ -16,10 +16,11 @@ from app.rag import answer_question_from_context
 from app.email_parser import check_for_new_materials
 
 # Setup logging
+import sys
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
-    filename="bot_debug.log"
+    stream=sys.stdout
 )
 # Set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
