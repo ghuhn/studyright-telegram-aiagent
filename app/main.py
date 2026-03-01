@@ -446,16 +446,19 @@ def main() -> None:
         logger.warning("JobQueue is not initialized. Background tasks won't run. Make sure 'python-telegram-bot[job-queue]' is installed.")
 
     # Determine if we are running in the cloud (Render) or locally
-    port = int(os.environ.get("PORT", "8000"))
-    render_external_url = os.environ.get("RENDER_EXTERNAL_URL")
+    is_render = os.environ.get("RENDER", "") == "true"
 
-    if render_external_url:
+    if is_render:
+        port = int(os.environ.get("PORT", "10000"))
+        render_hostname = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "")
+        webhook_url = f"https://{render_hostname}/{settings.telegram_bot_token}"
+        
         # Running on Render: Use Webhooks
-        logger.info(f"Starting bot with Webhook on port {port} targeting {render_external_url}...")
+        logger.info(f"Starting bot with Webhook on port {port} targeting {webhook_url}...")
         application.run_webhook(
             listen="0.0.0.0",
             port=port,
-            webhook_url=f"{render_external_url}/{settings.telegram_bot_token}"
+            webhook_url=webhook_url
         )
     else:
         # Running locally: Use Polling
