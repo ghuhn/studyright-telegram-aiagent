@@ -1,6 +1,9 @@
 import asyncio
 import os
 import logging
+import uvicorn
+from fastapi import FastAPI, Request, Response
+from contextlib import asynccontextmanager
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.error import BadRequest
@@ -453,13 +456,36 @@ def main() -> None:
         render_hostname = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "")
         webhook_url = f"https://{render_hostname}/{settings.telegram_bot_token}"
         
-        # Running on Render: Use Webhooks
-        logger.info(f"Starting bot with Webhook on port {port} targeting {webhook_url}...")
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            webhook_url=webhook_url
-        )
+        # We need a custom FastAPI app to serve the webhook because Render 
+        # expects a proper external Web Server process to bind to the port.
+        @asynccontextmanager
+        async def lifespan(app: FastAPI):
+            # Set up webhook
+            await application.bot.set_webhook(url=webhook_url)
+            # Initialize and start tg application manually
+            await application.initialize()
+            await application.start()
+            yield
+            # Stop tg application manually
+            await application.stop()
+            await application.shutdown()
+
+        app = FastAPI(lifespan=lifespan)
+
+        @app.post(f"/{settings.telegram_bot_token}")
+        async def telegram_webhook(request: Request):
+            """Endpoint for Telegram to send updates to."""
+            update = Update.de_json(await request.json(), application.bot)
+            await application.process_update(update)
+            return Response(status_code=200)
+
+        @app.get("/")
+        async def health_check():
+            """Render checks for open ports. This proves the server is alive."""
+            return {"status": "ok"}
+
+        logger.info(f"Starting ASGI Webhook Server on port {port} targeting {webhook_url}...")
+        uvicorn.run(app, host="0.0.0.0", port=port)
     else:
         # Running locally: Use Polling
         logger.info("Starting bot with Polling...")
