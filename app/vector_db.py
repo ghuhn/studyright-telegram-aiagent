@@ -3,17 +3,28 @@ import uuid
 import random
 from typing import List
 from pinecone import Pinecone
-from sentence_transformers import SentenceTransformer
 from app.config import settings
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Initialize Pinecone client
 # Ensure your API key is correct and valid
 pc = Pinecone(api_key=settings.pinecone_api_key)
 index = pc.Index(settings.pinecone_index_name)
 
-# Initialize the exact same embedding model used by Chroma's default
-# This ensures a 384-dimensional vector, matching what Pinecone expects
-encoder = SentenceTransformer('all-MiniLM-L6-v2')
+# Lazily initialized to prevent blocking Uvicorn startup (Render timeout)
+_encoder = None
+
+def get_encoder():
+    """Lazily load the 90MB PyTorch model into memory only when first queried."""
+    global _encoder
+    if _encoder is None:
+        logger.info("Initializing SentenceTransformer model (this takes a few seconds)...")
+        from sentence_transformers import SentenceTransformer
+        _encoder = SentenceTransformer('all-MiniLM-L6-v2')
+        logger.info("SentenceTransformer model loaded.")
+    return _encoder
 
 def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
     """Break a long text into smaller chunks for vectorization."""
@@ -36,7 +47,7 @@ def add_document_to_vector_db(telegram_id: str, filename: str, text: str, subjec
         return
         
     # Generate vectors using SentenceTransformers manually
-    embeddings = encoder.encode(chunks).tolist()
+    embeddings = get_encoder().encode(chunks).tolist()
     
     vectors_to_upsert = []
     for i, chunk in enumerate(chunks):
@@ -61,7 +72,7 @@ def add_document_to_vector_db(telegram_id: str, filename: str, text: str, subjec
 
 def search_documents(telegram_id: str, query: str, subject: str = "General", n_results: int = 3) -> List[str]:
     """Search the user's documents for the query within a specific subject via Pinecone."""
-    query_vector = encoder.encode(query).tolist()
+    query_vector = get_encoder().encode(query).tolist()
     
     results = index.query(
         vector=query_vector,
