@@ -4,8 +4,8 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
 # If modifying these scopes, delete the file token.json.
-# We only need read-only access to Gmail (not sending).
-SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+# We need read/write access to Gmail to remove the UNREAD label.
+SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
 
 def main():
     """Shows basic usage of the Gmail API.

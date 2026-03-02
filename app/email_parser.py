@@ -18,8 +18,8 @@ from app.database import SessionLocal, User, Notification, DocumentMetadata
 
 logger = logging.getLogger(__name__)
 
-# Scopes required to read Gmail
-SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+# Scopes required to read and modify Gmail (to remove UNREAD label)
+SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
 
 class EmailDocument(BaseModel):
     filename: str
