@@ -230,6 +230,52 @@ async def handle_move(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     finally:
         db.close()
 
+async def handle_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Delete a specific document by ID."""
+    if len(context.args) < 1:
+        await update.message.reply_text("Usage: `/delete <ID>`\nExample: `/delete 14`", parse_mode="Markdown")
+        return
+        
+    try:
+        doc_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("The document ID must be a number. Use /list to see your document IDs.")
+        return
+        
+    user_id = str(update.effective_user.id)
+    
+    await update.message.chat.send_action(action="typing")
+    
+    db = SessionLocal()
+    try:
+        db_user = db.query(User).filter(User.telegram_id == user_id).first()
+        if not db_user:
+            await update.message.reply_text("Please send /start first to register your account.")
+            return
+            
+        doc = db.query(DocumentMetadata).filter(DocumentMetadata.id == doc_id, DocumentMetadata.user_id == db_user.id).first()
+        if not doc:
+            await update.message.reply_text(f"Document with ID {doc_id} not found. Use /list to see your documents.")
+            return
+            
+        filename = doc.filename
+        
+        # 1. Update Vector DB
+        deleted_chunks = await asyncio.to_thread(delete_document_from_vector_db, user_id, filename)
+        
+        # 2. Update Postgres DB
+        db.delete(doc)
+        db.commit()
+        
+        await update.message.reply_text(f"🗑️ Successfully deleted `{filename}` ({deleted_chunks} chunks removed).", parse_mode="Markdown")
+        
+    except Exception as e:
+        logger.error(f"Error deleting document: {e}")
+        db.rollback()
+        await update.message.reply_text("Sorry, there was an error deleting your document.")
+    finally:
+        db.close()
+
 async def handle_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the /ask command by searching the vector DB and generating an answer."""
     if not context.args:
