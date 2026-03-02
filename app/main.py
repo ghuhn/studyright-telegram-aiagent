@@ -479,7 +479,12 @@ app = FastAPI(lifespan=lifespan)
 async def telegram_webhook(request: Request):
     """Endpoint for Telegram to send updates to via Webhooks."""
     update = Update.de_json(await request.json(), telegram_app.bot)
-    await telegram_app.update_queue.put(update)
+    
+    # Process the update in the background so we can instantly return 200 OK
+    # and prevent Telegram from infinitely retrying a timeout.
+    import asyncio
+    asyncio.create_task(telegram_app.process_update(update))
+    
     return Response(status_code=200)
 
 @app.get("/")
