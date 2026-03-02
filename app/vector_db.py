@@ -165,6 +165,33 @@ def move_document_in_vector_db(telegram_id: str, filename: str, new_subject: str
         
     return len(vectors_to_upsert)
 
+def delete_document_from_vector_db(telegram_id: str, filename: str) -> int:
+    """Delete a specific document belonging to a user from the vector DB."""
+    dummy_vector = [0.0] * 384
+    
+    # Query all chunks belonging to this user and filename
+    results = index.query(
+        vector=dummy_vector,
+        top_k=10000,
+        include_metadata=False, # We only need IDs for deletion
+        filter={
+            "telegram_id": {"$eq": telegram_id},
+            "filename": {"$eq": filename}
+        }
+    )
+    
+    if not results or not results.matches:
+        return 0
+        
+    ids_to_delete = [match.id for match in results.matches]
+    
+    # Batch delete
+    batch_size = 1000
+    for i in range(0, len(ids_to_delete), batch_size):
+        index.delete(ids=ids_to_delete[i:i + batch_size])
+        
+    return len(ids_to_delete)
+
 def get_random_document_chunk(telegram_id: str, subject: str = "General") -> str | None:
     """Retrieve a random document chunk belonging to the user for a specific subject."""
     dummy_vector = [0.0] * 384 

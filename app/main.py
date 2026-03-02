@@ -11,7 +11,7 @@ from app.config import settings
 from app.llm import generate_summary, generate_flashcards, generate_quiz_question, evaluate_quiz_answer
 from app.document_parser import parse_document
 from app.database import SessionLocal, User, DocumentMetadata, Notification
-from app.vector_db import search_documents, clear_user_documents, get_random_document_chunk, move_document_in_vector_db
+from app.vector_db import search_documents, clear_user_documents, get_random_document_chunk, move_document_in_vector_db, delete_document_from_vector_db
 from app.rag import answer_question_from_context
 from app.email_parser import check_for_new_materials
 
@@ -96,6 +96,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "- Use /list to see all your uploaded documents categorized by subject.\n"
         "- Use /subject <topic> to change the current subject folder your documents save to.\n"
         "- Use /move <file_id> <new_subject> to re-categorize a document.\n"
+        "- Use /delete <file_id> to delete a specific document.\n"
         "- Use /flashcards <topic> to generate study flashcards on a topic.\n"
         "- Use /quiz to instantly get a random pop-quiz question based on your notes.\n"
         "- Use /ask <question> to ask a question based on your uploaded documents.\n"
@@ -545,6 +546,7 @@ def setup_application():
     telegram_app.add_handler(CommandHandler("list", handle_list))
     telegram_app.add_handler(CommandHandler("subject", handle_subject))
     telegram_app.add_handler(CommandHandler("move", handle_move))
+    telegram_app.add_handler(CommandHandler("delete", handle_delete))
     telegram_app.add_handler(CommandHandler("flashcards", handle_flashcards))
     telegram_app.add_handler(CommandHandler("quiz", handle_quiz))
     telegram_app.add_handler(CommandHandler("ask", handle_ask))
