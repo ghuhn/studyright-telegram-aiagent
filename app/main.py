@@ -335,7 +335,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # Store text chunks in the vector DB for future semantic search
     try:
         from app.vector_db import add_document_to_vector_db
-        await asyncio.to_thread(add_document_to_vector_db, str(user_id), document.file_name, process_text, subject=active_subject)
+        await add_document_to_vector_db(str(user_id), document.file_name, process_text, subject=active_subject)
         logger.info(f"Successfully added {document.file_name} to vector DB for user {user_id} in subject {active_subject}")
     except Exception as e:
         logger.error(f"Failed to add document to vector DB: {e}")

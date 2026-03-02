@@ -1,6 +1,7 @@
 import os
 import uuid
 import random
+import asyncio
 from typing import List
 from pinecone import Pinecone
 from app.config import settings
@@ -40,14 +41,18 @@ def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> List[st
         
     return chunks
 
-def add_document_to_vector_db(telegram_id: str, filename: str, text: str, subject: str = "General"):
+async def add_document_to_vector_db(telegram_id: str, filename: str, text: str, subject: str = "General"):
     """Chunk the document text, generate vectors, and store in Pinecone."""
     chunks = chunk_text(text)
     if not chunks:
         return
         
-    # Generate vectors using SentenceTransformers manually
-    embeddings = get_encoder().encode(chunks).tolist()
+    # Generate vectors asynchronously to prevent blocking the event loop on Render
+    try:
+        embeddings = await asyncio.to_thread(lambda: get_encoder().encode(chunks).tolist())
+    except Exception as e:
+        logger.error(f"Failed to generate embeddings: {e}")
+        return
     
     vectors_to_upsert = []
     for i, chunk in enumerate(chunks):
