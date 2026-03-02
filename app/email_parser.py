@@ -14,7 +14,7 @@ from app.config import settings
 from app.document_parser import parse_document
 from app.llm import generate_summary
 from app.vector_db import add_document_to_vector_db
-from app.database import SessionLocal, User, Notification
+from app.database import SessionLocal, User, Notification, DocumentMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -159,14 +159,26 @@ async def check_for_new_materials(user_id: str) -> List[str]:
                                 # Generate summary
                                 summary = await generate_summary(process_text)
                                 
-                                # Add to vector DB
-                                add_document_to_vector_db(user_id, filename, process_text)
-                                
-                                # Log Notification
                                 db = SessionLocal()
                                 try:
+                                    # Fetch DB user to grab active subject
                                     db_user = db.query(User).filter(User.telegram_id == user_id).first()
                                     if db_user:
+                                        active_subject = db_user.active_subject
+                                        
+                                        # Add to vector DB with the correct subject
+                                        await add_document_to_vector_db(user_id, filename, process_text, subject=active_subject)
+                                        
+                                        # Log Document Metadata for Postgres 
+                                        doc_meta = DocumentMetadata(
+                                            user_id=db_user.id,
+                                            filename=filename,
+                                            file_type=file_ext,
+                                            subject=active_subject,
+                                            summary=summary
+                                        )
+                                        db.add(doc_meta)
+                                        
                                         notif = Notification(
                                             user_id=db_user.id,
                                             message=f"📧 Received document from email: {filename} (Sender: {sender})"
@@ -174,7 +186,8 @@ async def check_for_new_materials(user_id: str) -> List[str]:
                                         db.add(notif)
                                         db.commit()
                                 except Exception as e:
-                                    logger.error(f"Error saving email notification: {e}")
+                                    logger.error(f"Error saving email notification or metadata: {e}")
+                                    db.rollback()
                                 finally:
                                     db.close()
                                 
