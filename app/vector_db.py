@@ -129,6 +129,42 @@ def clear_user_documents(telegram_id: str) -> int:
     
     return len(filenames)
 
+def move_document_in_vector_db(telegram_id: str, filename: str, new_subject: str) -> int:
+    """Move a user's document to a new subject by updating its vector metadata."""
+    dummy_vector = [0.0] * 384
+    
+    # Query all chunks belonging to this user and filename
+    results = index.query(
+        vector=dummy_vector,
+        top_k=10000,
+        include_metadata=True,
+        include_values=True,
+        filter={
+            "telegram_id": {"$eq": telegram_id},
+            "filename": {"$eq": filename}
+        }
+    )
+    
+    if not results or not results.matches:
+        return 0
+        
+    vectors_to_upsert = []
+    
+    for match in results.matches:
+        metadata = match.metadata
+        metadata['subject'] = new_subject
+        vectors_to_upsert.append(
+            {"id": match.id, "values": match.values, "metadata": metadata}
+        )
+        
+    # Upsert updated vectors to overwrite previous metadata
+    batch_size = 100
+    for i in range(0, len(vectors_to_upsert), batch_size):
+        batch = vectors_to_upsert[i:i + batch_size]
+        index.upsert(vectors=batch)
+        
+    return len(vectors_to_upsert)
+
 def get_random_document_chunk(telegram_id: str, subject: str = "General") -> str | None:
     """Retrieve a random document chunk belonging to the user for a specific subject."""
     dummy_vector = [0.0] * 384 

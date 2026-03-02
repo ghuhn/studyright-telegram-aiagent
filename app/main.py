@@ -11,7 +11,7 @@ from app.config import settings
 from app.llm import generate_summary, generate_flashcards, generate_quiz_question, evaluate_quiz_answer
 from app.document_parser import parse_document
 from app.database import SessionLocal, User, DocumentMetadata, Notification
-from app.vector_db import search_documents, clear_user_documents, get_random_document_chunk
+from app.vector_db import search_documents, clear_user_documents, get_random_document_chunk, move_document_in_vector_db
 from app.rag import answer_question_from_context
 from app.email_parser import check_for_new_materials
 
@@ -93,7 +93,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Help! Here is what I can do:\n"
         "- Send me any text to get a summary.\n"
         "- Upload a PDF, Word doc, or TXT file to get a summary. I will save it to my memory.\n"
+        "- Use /list to see all your uploaded documents categorized by subject.\n"
         "- Use /subject <topic> to change the current subject folder your documents save to.\n"
+        "- Use /move <file_id> <new_subject> to re-categorize a document.\n"
         "- Use /flashcards <topic> to generate study flashcards on a topic.\n"
         "- Use /quiz to instantly get a random pop-quiz question based on your notes.\n"
         "- Use /ask <question> to ask a question based on your uploaded documents.\n"
@@ -138,6 +140,92 @@ async def handle_subject(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as e:
         logger.error(f"Error changing subject: {e}")
         await update.message.reply_text("Sorry, there was an error updating your subject.")
+    finally:
+        db.close()
+
+async def handle_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List all user documents grouped by subject."""
+    user_id = str(update.effective_user.id)
+    
+    db = SessionLocal()
+    try:
+        db_user = db.query(User).filter(User.telegram_id == user_id).first()
+        if not db_user:
+            await update.message.reply_text("Please send /start first to register your account.")
+            return
+            
+        docs = db.query(DocumentMetadata).filter(DocumentMetadata.user_id == db_user.id).all()
+        
+        if not docs:
+            await update.message.reply_text("You haven't uploaded any documents yet!")
+            return
+            
+        # Group by subject
+        subjects = {}
+        for doc in docs:
+            subjects.setdefault(doc.subject, []).append(doc)
+            
+        response_text = "**📚 Your Study Materials:**\n\n"
+        for subject, subject_docs in subjects.items():
+            response_text += f"*{subject}:*\n"
+            for doc in subject_docs:
+                response_text += f"  • `[ID: {doc.id}]` {doc.filename}\n"
+            response_text += "\n"
+            
+        response_text += "*(To move a file to a different subject, use `/move ID SubjectName`)*"
+        await send_long_message(update, response_text, parse_mode="Markdown")
+        
+    except Exception as e:
+        logger.error(f"Error listing documents: {e}")
+        await update.message.reply_text("Sorry, there was an error retrieving your documents.")
+    finally:
+        db.close()
+
+async def handle_move(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Move a document to a new subject."""
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: `/move <ID> <New Subject>`\nExample: `/move 14 History`", parse_mode="Markdown")
+        return
+        
+    try:
+        doc_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("The document ID must be a number. Use /list to see your document IDs.")
+        return
+        
+    new_subject = " ".join(context.args[1:]).title()
+    user_id = str(update.effective_user.id)
+    
+    await update.message.chat.send_action(action="typing")
+    
+    db = SessionLocal()
+    try:
+        db_user = db.query(User).filter(User.telegram_id == user_id).first()
+        if not db_user:
+            await update.message.reply_text("Please send /start first to register your account.")
+            return
+            
+        doc = db.query(DocumentMetadata).filter(DocumentMetadata.id == doc_id, DocumentMetadata.user_id == db_user.id).first()
+        if not doc:
+            await update.message.reply_text(f"Document with ID {doc_id} not found in your account. Use /list to see your documents.")
+            return
+            
+        old_subject = doc.subject
+        filename = doc.filename
+        
+        # 1. Update DB Metadata
+        doc.subject = new_subject
+        db.commit()
+        
+        # 2. Update Vector DB Metadata
+        await asyncio.to_thread(move_document_in_vector_db, user_id, filename, new_subject)
+        
+        await update.message.reply_text(f"🚚 Successfully moved `{filename}` from **{old_subject}** to **{new_subject}**!", parse_mode="Markdown")
+        
+    except Exception as e:
+        logger.error(f"Error moving document: {e}")
+        db.rollback()
+        await update.message.reply_text("Sorry, there was an error moving your document.")
     finally:
         db.close()
 
@@ -387,7 +475,34 @@ async def send_daily_quiz(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
         
     question = await generate_quiz_question(random_chunk)
-    await send_long_message_context(context, telegram_id, f"**🧠 Daily Pop Quiz!**\n\n{question}", parse_mode="Markdown")
+    await send_long_message_context(context, telegram_id, f"**🧠 Daily Pop Quiz for {active_subject}!**\n\n{question}", parse_mode="Markdown")
+
+async def send_study_reminder(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Background job to send a daily study reminder to the user."""
+    logger.info("Running daily study reminder job...")
+    
+    db = SessionLocal()
+    try:
+        user = db.query(User).first()
+        if not user:
+            return
+        telegram_id = str(user.telegram_id)
+        active_subject = user.active_subject or "General"
+    except Exception as e:
+        logger.error(f"Error fetching user for reminder job: {e}")
+        return
+    finally:
+        db.close()
+        
+    messages = [
+        f"📚 Time to study! Ready to review your notes on **{active_subject}**? Hit `/quiz` to get started!",
+        f"🎓 Consistency is key! Type `/ask` to brush up on **{active_subject}** or `/flashcards` for a quick review.",
+        f"⏰ Study reminder! You've got this. Your **{active_subject}** notes are waiting for you.",
+        f"🚀 Let's level up! Ready to tackle some **{active_subject}** concepts?"
+    ]
+    import random
+    reminder_msg = random.choice(messages)
+    await send_long_message_context(context, telegram_id, reminder_msg, parse_mode="Markdown")
 
 async def handle_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Manually trigger a pop-quiz."""
@@ -427,7 +542,9 @@ def setup_application():
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("help", help_command))
     telegram_app.add_handler(CommandHandler("commands", help_command))
+    telegram_app.add_handler(CommandHandler("list", handle_list))
     telegram_app.add_handler(CommandHandler("subject", handle_subject))
+    telegram_app.add_handler(CommandHandler("move", handle_move))
     telegram_app.add_handler(CommandHandler("flashcards", handle_flashcards))
     telegram_app.add_handler(CommandHandler("quiz", handle_quiz))
     telegram_app.add_handler(CommandHandler("ask", handle_ask))
@@ -445,6 +562,8 @@ def setup_application():
         job_queue.run_repeating(check_email_job, interval=900, first=10)
         # Send a daily quiz every 24 hours (86400 seconds)
         job_queue.run_repeating(send_daily_quiz, interval=86400, first=60)
+        # Send a daily study reminder offset by 12 hours from the quiz
+        job_queue.run_repeating(send_study_reminder, interval=86400, first=43200)
         logger.info("Background jobs scheduled.")
     else:
         logger.warning("JobQueue is not initialized. Background tasks won't run. Make sure 'python-telegram-bot[job-queue]' is installed.")
