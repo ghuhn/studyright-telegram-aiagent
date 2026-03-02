@@ -7,7 +7,9 @@ import os
 # In SQLAlchemy 2.0+, connecting to Postgres requires psycopg2 driver
 # But the URL string should just work out of the box if formatted correctly
 engine = create_engine(
-    settings.database_url
+    settings.database_url,
+    pool_pre_ping=True,
+    pool_recycle=300,
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

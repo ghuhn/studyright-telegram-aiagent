@@ -18,13 +18,13 @@ index = pc.Index(settings.pinecone_index_name)
 _encoder = None
 
 def get_encoder():
-    """Lazily load the 90MB PyTorch model into memory only when first queried."""
+    """Lazily load the FastEmbed ONNX model into memory to save RAM on Render Free Tier."""
     global _encoder
     if _encoder is None:
-        logger.info("Initializing SentenceTransformer model (this takes a few seconds)...")
-        from sentence_transformers import SentenceTransformer
-        _encoder = SentenceTransformer('all-MiniLM-L6-v2')
-        logger.info("SentenceTransformer model loaded.")
+        logger.info("Initializing FastEmbed TextEmbedding model (this takes a few seconds)...")
+        from fastembed import TextEmbedding
+        _encoder = TextEmbedding(model_name='sentence-transformers/all-MiniLM-L6-v2')
+        logger.info("FastEmbed TextEmbedding model loaded.")
     return _encoder
 
 def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
@@ -47,9 +47,10 @@ async def add_document_to_vector_db(telegram_id: str, filename: str, text: str, 
     if not chunks:
         return
         
-    # Generate vectors asynchronously to prevent blocking the event loop on Render
+    # Generate vectors asynchronously via FastEmbed ONNX runtime to prevent blocking the event loop or causing OOM
     try:
-        embeddings = await asyncio.to_thread(lambda: get_encoder().encode(chunks).tolist())
+        # FastEmbed returns a generator of numpy arrays, we convert to list of lists
+        embeddings = await asyncio.to_thread(lambda: [e.tolist() for e in get_encoder().embed(chunks)])
     except Exception as e:
         logger.error(f"Failed to generate embeddings: {e}")
         return
@@ -77,7 +78,8 @@ async def add_document_to_vector_db(telegram_id: str, filename: str, text: str, 
 
 def search_documents(telegram_id: str, query: str, subject: str = "General", n_results: int = 3) -> List[str]:
     """Search the user's documents for the query within a specific subject via Pinecone."""
-    query_vector = get_encoder().encode(query).tolist()
+    embedding_gen = get_encoder().embed([query])
+    query_vector = list(embedding_gen)[0].tolist()
     
     results = index.query(
         vector=query_vector,
