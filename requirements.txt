@@ -10,7 +10,7 @@ httpx
 PyMuPDF
 python-docx
 fastembed
-pinecone-client
+pinecone
 psycopg2-binary
 groq
 google-api-python-client
