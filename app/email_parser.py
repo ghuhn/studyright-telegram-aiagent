@@ -30,8 +30,8 @@ async def check_for_new_materials(user_id: str) -> List[str]:
     
     try:
         logger.info(f"Connecting to IMAP server {settings.email_imap_server}...")
-        # Connect to the IMAP server (this can block)
-        mail = await asyncio.to_thread(imaplib.IMAP4_SSL, settings.email_imap_server)
+        # Connect to the IMAP server (with 15 second timeout to prevent hanging on Render)
+        mail = await asyncio.to_thread(imaplib.IMAP4_SSL, settings.email_imap_server, timeout=15)
         
         logger.info("Logging into IMAP...")
         await asyncio.to_thread(mail.login, settings.email_address, settings.email_app_password)

@@ -164,7 +164,7 @@ async def handle_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(f"🔍 Searching your study materials in **{active_subject}**...", parse_mode="Markdown")
     
     # Search vector DB
-    results = search_documents(user_id, question, subject=active_subject, n_results=3)
+    results = await asyncio.to_thread(search_documents, user_id, question, subject=active_subject, n_results=3)
     
     if not results:
         await update.message.reply_text("You haven't uploaded any documents yet, or I couldn't find any relevant information.")
@@ -185,7 +185,7 @@ async def handle_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.chat.send_action(action="typing")
     
     try:
-        deleted_count = clear_user_documents(user_id)
+        deleted_count = await asyncio.to_thread(clear_user_documents, user_id)
         
         # Also delete from SQLite metadata DB
         db = SessionLocal()
@@ -335,7 +335,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # Store text chunks in the vector DB for future semantic search
     try:
         from app.vector_db import add_document_to_vector_db
-        add_document_to_vector_db(str(user_id), document.file_name, process_text, subject=active_subject)
+        await asyncio.to_thread(add_document_to_vector_db, str(user_id), document.file_name, process_text, subject=active_subject)
         logger.info(f"Successfully added {document.file_name} to vector DB for user {user_id} in subject {active_subject}")
     except Exception as e:
         logger.error(f"Failed to add document to vector DB: {e}")
@@ -405,7 +405,7 @@ async def handle_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         
     await update.message.chat.send_action(action="typing")
     
-    random_chunk = get_random_document_chunk(user_id, subject=active_subject)
+    random_chunk = await asyncio.to_thread(get_random_document_chunk, user_id, subject=active_subject)
     if not random_chunk:
         await update.message.reply_text("You haven't uploaded any study materials yet! Upload a document first so I can quiz you on it.")
         return
@@ -479,7 +479,7 @@ app = FastAPI(lifespan=lifespan)
 async def telegram_webhook(request: Request):
     """Endpoint for Telegram to send updates to via Webhooks."""
     update = Update.de_json(await request.json(), telegram_app.bot)
-    await telegram_app.process_update(update)
+    await telegram_app.update_queue.put(update)
     return Response(status_code=200)
 
 @app.get("/")
