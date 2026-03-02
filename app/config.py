@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./database.db"
     pinecone_api_key: str = ""
     pinecone_index_name: str = "ai-study-agent-db"
+    google_credentials_json: str = ""
+    google_token_json: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",

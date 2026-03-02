@@ -29,20 +29,36 @@ class EmailDocument(BaseModel):
 
 def get_gmail_service():
     """Authenticate and return the Gmail API service."""
+    import json
     creds = None
-    # token.json stores the user's access and refresh tokens
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
     
-    # If no valid credentials, we cannot proceed in background worker
+    # Priority 1: Check if token is provided via Environment Variable
+    if settings.google_token_json:
+        try:
+            token_info = json.loads(settings.google_token_json)
+            creds = Credentials.from_authorized_user_info(token_info, SCOPES)
+            logger.info("Loaded Google Gmail Credentials from Environment Variable.")
+        except Exception as e:
+            logger.error(f"Failed to parse GOOGLE_TOKEN_JSON environment variable: {e}")
+            
+    # Priority 2: Fallback to token.json file in local development
+    if not creds and os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+        logger.info("Loaded Google Gmail Credentials from local token.json file.")
+    
+    # If no valid credentials, try to refresh or fail
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             logger.info("Refreshing expired Google Gmail token...")
-            creds.refresh(Request())
-            with open('token.json', 'w') as token:
-                token.write(creds.to_json())
+            try:
+                creds.refresh(Request())
+                with open('token.json', 'w') as token:
+                    token.write(creds.to_json())
+            except Exception as e:
+                 logger.error(f"Failed to refresh Google token: {e}")
+                 return None
         else:
-            logger.error("No valid token.json found. You must run setup_google_auth.py locally first.")
+            logger.error("No valid Gmail auth token found. You must run setup_google_auth.py or set GOOGLE_TOKEN_JSON.")
             return None
             
     try:
